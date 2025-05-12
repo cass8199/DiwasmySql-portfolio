@@ -1,0 +1,112 @@
+-- Performance Analysis 
+--Change over time querry-- 
+select 
+month(sales_order_date) as Month ,
+Year(sales_order_date) as Year,
+sum(total_sales) as total_sales2,
+count (distinct customer_key) as totalcustomer,
+sum(Sales_quantity) as total_quantity
+from
+gold.fact_sales
+where sales_order_date is not null
+Group by Month(sales_order_date),Year(sales_order_date)
+order by Month(sales_order_date),Year(sales_order_date)
+---------------------------------------------------------------------
+
+----Cumulative Analysis 
+---calculate total sales each month and running total of sales over time 
+
+select
+month,
+total_sales,
+Sum(total_sales) over(partition by month order by month) as running_total,
+avg(averageprice) over (partition by month order by month) as moving_average
+From
+(
+select 
+datetrunc(Month,Sales_order_date) as month ,
+sum(total_sales) as total_sales,
+avg(sales_price) as averageprice 
+from 
+gold.fact_sales 
+where sales_order_date is not null
+Group by datetrunc(Month,Sales_order_date) 
+)t
+----------------------------------------------------------------------------------------------
+---------- performance Analysis
+--analyze the yearly performance by product comparing their sales 
+-- to both avg sales and previous years sales 
+select * from gold.fact_sales
+select * from gold.dim_products
+---------------------------------------------
+select
+year,
+total_sales,
+avg_price,
+lag(total_sales,1,null) over (order by year) as prev_sales,
+pname
+from
+(
+select 
+datetrunc(year,s.Sales_order_date) as year,
+sum(s.total_sales) as total_sales,
+avg(s.sales_price) as avg_price,
+p.product_name as pname
+from gold.fact_sales as s
+Left join gold.dim_products as p
+on p.producted_key = s.product_key
+where s.Sales_order_date is not null 
+group by datetrunc(year,s.Sales_order_date),p.product_name
+)t
+order by year
+
+---------------
+select 
+	DATETRUNC(year, sales_order_date) as yearsales,
+	sum(total_sales) as totalsales,
+	lag(sum(total_sales),1,null) over (order by DATETRUNC(year, sales_order_date)) as previousdate,
+	avg(total_sales) as avgsales
+from 
+gold.fact_sales
+where sales_order_date is not null 
+Group by DATETRUNC(year, sales_order_date)
+
+--------------------------------------------------------------------
+/* analyze the yearly performance of products by comparing
+their sales to both the average sales performance of the 
+product and the previous year's sales */
+
+select * from gold.fact_sales
+select * from gold.dim_products
+
+with yearly_product_sales AS
+(
+select
+Year(s.sales_order_date) as order_year,
+sum(s.total_sales) as current_sales,
+p.product_name 
+from
+gold.fact_sales as s 
+left join gold.dim_products as p
+on p.producted_key = s.product_key	
+where Year(s.sales_order_date) is not null 
+group by Year(s.sales_order_date), p.product_name 
+)
+select 
+order_year,
+product_name,
+current_sales, 
+avg(current_sales) over (partition by product_name) avg_sales,
+current_sales - avg(current_sales) over (partition by product_name) as diff_avg,
+	case when current_sales - avg(current_sales) over (partition by product_name) > 0 then 'Above Avg'
+	 when current_sales - avg(current_sales) over (partition by product_name) < 0 then 'Below Avg'
+	 else 'avg'
+end avg_change,
+lag(current_sales) over (partition by product_name order by order_year) as prev_yr_sales,
+current_sales - lag(current_sales) over (partition by product_name order by order_year) as diff_year,
+	case when current_sales - lag(current_sales) over (partition by product_name order by order_year) > 0 then 'INC'
+	 when current_sales - lag(current_sales) over (partition by product_name order by order_year) < 0 then 'DEC'
+	 else 'No change'
+end changesales 
+from yearly_product_sales
+order by product_name, order_year 
