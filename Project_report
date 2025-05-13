@@ -1,0 +1,201 @@
+/*
+-============================================================================
+customer report
+=============================================================================
+
+purpose:
+	- This report consolidates key customer metrics and behaviors
+
+Highlights:
+	1. Gathers essential fields such as name, ages, and transaction details.
+	2. segments customers into categories (VIP, Regular, New) and age groups.
+	3. Aggregates customer-level metrics:
+		- Total orders 
+		- Total Sales 
+		- Total quantity purchased 
+		-total products
+		- lifespan (in months)
+	4. Calculates Valuable KPIs:
+		- recency (months since last order)
+		-average order value
+		-average monthly spend
+==============================================================================
+*/ 
+
+create view gold.report_customers as 
+
+
+with base_query as 
+(
+select 
+	f.sales_order_number,
+	f.product_key,
+	f.sales_order_date,
+	f.total_sales,
+	f.sales_quantity,
+	c.customer_key,
+	c.customer_number,
+	concat(c.first_name, ' ', c.last_name) as Customer_name,
+	datediff(Year, c.Birthdate , getdate()) as age
+from gold.fact_sales f
+left join gold.dim_customers c
+on c.customer_key = f.customer_key
+
+where sales_order_date is not null )
+
+, customer_aggregation as
+(
+select 
+	customer_key,
+	customer_number,
+	Customer_name,
+	age,
+	count(distinct sales_order_number) as total_orders,
+	sum( total_sales) as total_sales,
+	sum(sales_quantity) as total_quantity,
+	count(distinct product_key) as total_products,
+	max(sales_order_date) as last_order_date,
+	datediff(month, min(sales_order_date), max(sales_order_date)) as lifespan
+from 
+	base_query
+group by
+	customer_key,
+	customer_number,
+	Customer_name,
+	age
+	)
+
+select
+	customer_key,
+	customer_number,
+	Customer_name,
+	age,
+	case when age < 20 then 'Under 20'
+		 When age between 20 and 29 Then '20-29'
+		 when age between 30 and 39 then '30-39'
+		 When age between 40 and 49 Then '40-49'
+		 Else '50 and above'
+	End as age_group,
+	case	
+		When lifespan >= 12 and total_sales > 5000 Then 'VIP'
+		When lifespan >= 12 and total_sales <= 5000 Then 'Regular'
+		Else 'New'
+	End As customer_segment,
+	last_order_date,
+	Datediff(month,last_order_date, getdate()) as recency,
+	total_orders,
+	total_sales,
+	total_quantity,
+	total_products,
+	lifespan,
+	--compute average order value (AVO)
+	case when total_sales = 0 then 0
+		else total_sales / total_orders
+	end as avg_order_value,
+	--compute average monthly spend 
+	case when lifespan = 0  then total_sales
+		else total_sales / lifespan
+	end as avg_monthly_spend
+	from customer_aggregation
+
+-----------------------------------------------------------------------------------------
+/*
+================================================================================\
+Product Report
+=================================================================================
+Purpose: 
+	- This report consolidates key product metrics and behaviors. 
+
+Highlights:
+	1. Gathers essential fields such as product name, category, subcategory, and cost.
+	2. Segments products by revenue to identify High- performaers, Mid-Range, or Low-performers.
+	3. Aggregates product-level metrics: 
+		- total orders
+		- total sales 
+		- total quantity sold 
+		- total customers (unique) 
+		- lifespan (in months) 
+
+	4. Calculates valuables KPIs: 
+		- recency(months since last sale) 
+		- average order revenue (AOR)
+		- average monthly revenue
+	=================================================================================*/
+
+	
+	select * from gold.dim_products
+	select * from gold.fact_sales
+
+
+with base_query as 
+(
+select
+	f.sales_order_number,
+	f.sales_order_date,
+	f.customer_key,
+	f.total_sales,
+	f.sales_quantity,
+	p.product_key,
+	p.product_name,
+	p.category,
+	p.sub_category,
+	p.product_cost
+from gold.fact_sales as f 
+left join gold.dim_products as p
+on p.producted_key = f.product_key
+where sales_order_date is not null 
+)
+
+
+, aggregated_query as
+(
+select 
+	product_name,
+	category,
+	sub_category,
+	product_cost,
+	max(sales_order_date) as lastorder,
+	count(Distinct sales_order_number) as total_order,
+	sum(total_sales) as tota_sales,
+	sum (sales_quantity) as total_qty_sold,
+	count(distinct customer_key) as total_customers,
+	datediff(month, min(sales_order_date),  max(sales_order_date) ) as lifespan,
+	Round(avg(cast(total_sales as float) / nullif(sales_quantity,0)),1) as ASP
+from base_query
+group by product_name,
+		category,
+		sub_category,
+		product_cost
+)
+
+
+select
+	product_name,
+	category,
+	sub_category,
+	product_cost,
+	lastorder,
+	total_order,
+	 tota_sales,
+	 total_qty_sold,
+	 total_customers,
+	lifespan,
+	 ASP,
+CASE WHEN tota_sales >= 50000 then 'High performers'
+	 WHEN tota_sales >=10000 then 'mid level'
+	else 'low performers'
+end as category,
+--AOR
+case 
+	when total_order= 0 then 0
+	else tota_sales / total_order 
+end as AOR,
+
+-- Average monthly revenue
+case 
+	when lifespan = 0 then tota_sales 
+	else tota_sales / lifespan
+end as avg_mnthly_rev
+
+from aggregated_query
+
